@@ -112,15 +112,21 @@ if st.session_state.lotto_data:
     st.markdown(f"**เลขที่หายไปนาน:** {', '.join(find_missing_digits(st.session_state.lotto_data))}")
     st.markdown(f"**เลขข้างเคียงจากสถิติ:** {', '.join(map(str, adjacent_hot_digits(st.session_state.lotto_data)))}")
 
- if st.button("🔮 ทำนายรอบถัดไป"):
-    st.markdown("### 🔮 ผลทำนายรอบถัดไป:")
+if st.session_state.lotto_data:
+    ...
+    if st.button("🔮 ทำนายรอบถัดไป"):
+        st.markdown("### 🔮 ผลทำนายรอบถัดไป:")
+        st.markdown(f"<h2 style='color:red;'>เลขเด่น: {main_digit}</h2>", unsafe_allow_html=True)
 
-    # เลขเด่น - ใหญ่ สีแดง
-    st.markdown(f"<h2 style='color:red;'>เลขเด่น: {main_digit}</h2>", unsafe_allow_html=True)
+        main_pairs_html = " ".join([f"<span style='font-size:28px; color:red;'>{pair}</span>" for pair in main_pairs])
+        st.markdown(f"<div>เลขสองตัวแนะนำ: {main_pairs_html}</div>", unsafe_allow_html=True)
 
-    # เลขสองตัวแนะนำ - สีแดง
-    main_pairs_html = " ".join([f"<span style='font-size:28px; color:red;'>{pair}</span>" for pair in main_pairs])
-    st.markdown(f"<div>เลขสองตัวแนะนำ: {main_pairs_html}</div>", unsafe_allow_html=True)
+        import random
+        d1 = str(random.randint(0, 9))
+        d2 = main_digit
+        d3 = str(random.randint(0, 9))
+        lucky_3 = d1 + d2 + d3
+        st.markdown(f"<h4 style='color:red;'>เลขเสียวสามตัว: {lucky_3}</h4>", unsafe_allow_html=True)
 
     # เลขเสียวสามตัว - main_digit อยู่หลักสิบ
     import random
