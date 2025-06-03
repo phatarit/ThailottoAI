@@ -20,7 +20,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Vessavana_Giant_at_Wat_Arun.jpg/800px-Vessavana_Giant_at_Wat_Arun.jpg", caption="ยักษ์เวสสุวรรณเสริมสิริมงคล", use_column_width=True)
+# st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Vessavana_Giant_at_Wat_Arun.jpg/800px-Vessavana_Giant_at_Wat_Arun.jpg", caption="ยักษ์เวสสุวรรณเสริมสิริมงคล", use_column_width=True)
 
 st.title("🎯 ระบบ AI วิเคราะห์และทำนายหวย")
 st.caption("ออกแบบสำหรับการใช้งานบน Windows และมือถือ | เวอร์ชันทดลอง")
@@ -57,4 +57,4 @@ if st.session_state.lotto_data:
 else:
     st.info("ยังไม่มีข้อมูลย้อนหลัง กรุณากรอกผลหวยก่อน")
 
-st.image("https://www.matichonweekly.com/wp-content/uploads/2022/08/yant1.jpg", caption="ยันต์มหาลาภ เสริมโชคลาภ", use_column_width=True)
+# st.image("https://www.matichonweekly.com/wp-content/uploads/2022/08/yant1.jpg", caption="ยันต์มหาลาภ เสริมโชคลาภ", use_column_width=True)
