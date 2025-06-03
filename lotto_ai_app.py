@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="AI ทำนายหวย", layout="centered")
 
+# ------------------- CSS ------------------
 st.markdown("""
     <style>
     .stApp {
@@ -16,55 +17,62 @@ st.markdown("""
         padding-bottom: 2rem;
         max-width: 700px;
     }
-    button {
-        font-size: 16px !important;
-    }
     </style>
 """, unsafe_allow_html=True)
 
 st.title("🎯 ระบบ AI วิเคราะห์และทำนายหวย")
-st.caption("พัฒนาโดย Phatarit AI Lab | เวอร์ชันทดลอง")
+st.caption("พัฒนาโดย Phatarit AI Lab")
 
-# เก็บข้อมูลย้อนหลัง
+# ------------------- เก็บข้อมูล ------------------
 if "lotto_data" not in st.session_state:
     st.session_state.lotto_data = []
 
-st.subheader("📝 กรอกผลหวยย้อนหลัง")
-col1, col2 = st.columns(2)
-with col1:
-    top3 = st.text_input("สามตัวบน", max_chars=3)
-with col2:
-    bottom2 = st.text_input("สองตัวล่าง", max_chars=2)
+# ------------------- กรอกย้อนหลังหลายชุด ------------------
+st.subheader("🧾 เพิ่มข้อมูลย้อนหลัง (สูงสุด 10 งวด)")
+num_rows = 10
+bulk_data = []
 
-col3, col4 = st.columns(2)
-with col3:
-    if st.button("➕ เพิ่มข้อมูล"):
-        if top3.isdigit() and bottom2.isdigit():
-            st.session_state.lotto_data.append((top3.zfill(3), bottom2.zfill(2)))
-            st.success("✅ เพิ่มข้อมูลแล้ว")
-        else:
-            st.error("❌ กรุณากรอกตัวเลขเท่านั้น")
-with col4:
-    if st.button("🗑️ ล้างข้อมูล"):
-        st.session_state.lotto_data = []
-        st.success("🧹 ล้างข้อมูลทั้งหมดแล้ว")
+with st.form("bulk_input_form"):
+    for i in range(num_rows):
+        cols = st.columns(2)
+        with cols[0]:
+            top = st.text_input(f"งวดที่ {i+1} - สามตัวบน", key=f"top_{i}", max_chars=3)
+        with cols[1]:
+            bottom = st.text_input(f"งวดที่ {i+1} - สองตัวล่าง", key=f"bottom_{i}", max_chars=2)
+        bulk_data.append((top, bottom))
 
-# ------------------------------- #
-def detect_consecutive_doubles(data):
-    recent = [x[0] for x in data[-3:]]
-    return list(set([n for n in recent if n[0] == n[1] or n[1] == n[2]]))
+    submitted = st.form_submit_button("➕ เพิ่มข้อมูลย้อนหลังทั้งหมด")
+    if submitted:
+        count = 0
+        for top, bottom in bulk_data:
+            if top.isdigit() and bottom.isdigit():
+                st.session_state.lotto_data.append((top.zfill(3), bottom.zfill(2)))
+                count += 1
+        st.success(f"✅ เพิ่มข้อมูลทั้งหมด {count} รายการ")
+
+# ------------------- วิเคราะห์ ------------------
+def detect_common_digits(last, previous):
+    return sorted(set("".join(last)) & set("".join(previous)))
 
 def find_missing_digits(data, recent=10):
-    used = "".join([a+b for a, b in data[-recent:]])
+    used = "".join([a + b for a, b in data[-recent:]])
     return [d for d in "0123456789" if d not in used]
 
 def adjacent_hot_digits(data):
-    all_digits = "".join([a+b for a, b in data])
+    all_digits = "".join([a + b for a, b in data])
     counter = Counter(all_digits)
     top = counter.most_common(1)[0][0]
-    return [(int(top)+i)%10 for i in [-1, 1]]
+    return [(int(top) + i) % 10 for i in [-1, 1]]
 
-# ------------------------------- #
+def tail_digit_freq(data):
+    tails = [a[-1] for a, b in data]
+    return Counter(tails).most_common()
+
+def bottom_tail_freq(data):
+    tails = [b[-1] for a, b in data]
+    return Counter(tails).most_common()
+
+# ------------------- แสดงผล ------------------
 if st.session_state.lotto_data:
     df = pd.DataFrame(st.session_state.lotto_data, columns=["สามตัวบน", "สองตัวล่าง"])
     st.dataframe(df, use_container_width=True)
@@ -77,23 +85,21 @@ if st.session_state.lotto_data:
 
     last_round = st.session_state.lotto_data[-1]
     second_last = st.session_state.lotto_data[-2] if len(st.session_state.lotto_data) >= 2 else None
-    repeated = [n for n in last_round if last_round.count(n) > 1]
 
     st.subheader("📊 วิเคราะห์หลัก")
     st.markdown(f"**เลขเด่น:** `{main_digit}`")
-    st.markdown(f"**เลขเบิ้ล:** {' '.join(repeated) if repeated else 'ไม่มี'}")
-    if second_last:
-        match = set(last_round) & set(second_last)
-        st.markdown(f"**เลขซ้ำจากรอบก่อน:** {' '.join(match) if match else 'ไม่มี'}")
 
-    start_digits = [a[0] for a, _ in st.session_state.lotto_data]
-    end_digits = [a[-1] for a, _ in st.session_state.lotto_data]
-    start_freq = Counter(start_digits).most_common(1)
-    end_freq = Counter(end_digits).most_common(1)
-    st.markdown(f"**ขึ้นต้นบ่อย:** {start_freq[0][0]} | **ลงท้ายบ่อย:** {end_freq[0][0]}")
+    if second_last:
+        shared = detect_common_digits(last_round, second_last)
+        st.markdown(f"**เลขซ้ำจากรอบก่อน:** {' '.join(shared) if shared else 'ไม่มี'}")
+
+    top_tail = tail_digit_freq(st.session_state.lotto_data)
+    bottom_tail = bottom_tail_freq(st.session_state.lotto_data)
+    st.markdown(f"**เลขลงท้ายบ่อย (สามตัวบน):** `{top_tail[0][0]}` ({top_tail[0][1]} ครั้ง)")
+    st.markdown(f"**เลขลงท้ายบ่อย (สองตัวล่าง):** `{bottom_tail[0][0]}` ({bottom_tail[0][1]} ครั้ง)")
 
     # 🔁 Pie Chart
-    st.subheader("📈 กราฟความถี่ (Pie Chart)")
+    st.subheader("🥧 กราฟความถี่ (Pie Chart)")
     labels = [item[0] for item in freq]
     sizes = [item[1] for item in freq]
     fig, ax = plt.subplots()
@@ -101,22 +107,37 @@ if st.session_state.lotto_data:
     ax.axis('equal')
     st.pyplot(fig)
 
-    # 🧠 วิเคราะห์สูตรขั้นสูง
+    # 🧠 วิเคราะห์สูตร
     st.subheader("🧠 วิเคราะห์สูตรเพิ่มเติม")
-    st.markdown(f"**เลขเบิ้ล 3 งวดติด:** {', '.join(detect_consecutive_doubles(st.session_state.lotto_data)) or 'ไม่มี'}")
     st.markdown(f"**เลขที่หายไปนาน:** {', '.join(find_missing_digits(st.session_state.lotto_data))}")
     st.markdown(f"**เลขข้างเคียงจากสถิติ:** {', '.join(map(str, adjacent_hot_digits(st.session_state.lotto_data)))}")
 
-    if st.button("🧠 ทำนายรอบถัดไป"):
-        st.markdown("### 🔮 ผลทำนาย:")
-        st.success(f"เลขเด่น: `{main_digit}`")
-        st.info(f"เลขสองตัวแนะนำ: `{', '.join(main_pairs)}`")
+   if st.button("🔮 ทำนายรอบถัดไป"):
+    st.markdown("### 🔮 ผลทำนายรอบถัดไป:")
 
-    # 📤 Export CSV
+    # เลขเด่น - ใหญ่ สีแดง
+    st.markdown(f"<h2 style='color:red;'>เลขเด่น: {main_digit}</h2>", unsafe_allow_html=True)
+
+    # เลขสองตัวแนะนำ - สีแดง
+    main_pairs_html = " ".join([f"<span style='font-size:28px; color:red;'>{pair}</span>" for pair in main_pairs])
+    st.markdown(f"<div>เลขสองตัวแนะนำ: {main_pairs_html}</div>", unsafe_allow_html=True)
+
+    # เลขเสียวสามตัว - main_digit อยู่หลักสิบ
+    import random
+    d1 = str(random.randint(0, 9))
+    d2 = main_digit
+    d3 = str(random.randint(0, 9))
+    lucky_3 = d1 + d2 + d3
+    st.markdown(f"<h4 style='color:red;'>เลขเสียวสามตัว: {lucky_3}</h4>", unsafe_allow_html=True)
+
+
+    # 📥 Download
     csv = df.to_csv(index=False).encode("utf-8-sig")
-    st.download_button("📥 ดาวน์โหลดข้อมูลย้อนหลังเป็น CSV", data=csv, file_name="lotto_history.csv", mime="text/csv")
+    st.download_button("📥 ดาวน์โหลดข้อมูลย้อนหลัง", data=csv, file_name="lotto_history.csv", mime="text/csv")
+
 else:
-    st.info("กรุณากรอกผลหวยย้อนหลังอย่างน้อย 1 งวดก่อนเริ่มวิเคราะห์")
+    st.info("กรุณากรอกผลหวยย้อนหลังอย่างน้อย 1 งวด")
 
 st.markdown("---")
-st.markdown("🔗 พัฒนาโดย **Phatarit AI Lab** | ใช้เทคโนโลยี Streamlit + Python")
+st.markdown("🔗 พัฒนาโดย **Phatarit AI Lab** | ใช้ Streamlit + Python")
+
