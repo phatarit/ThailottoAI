@@ -112,7 +112,7 @@ if st.session_state.lotto_data:
     st.markdown(f"**เลขที่หายไปนาน:** {', '.join(find_missing_digits(st.session_state.lotto_data))}")
     st.markdown(f"**เลขข้างเคียงจากสถิติ:** {', '.join(map(str, adjacent_hot_digits(st.session_state.lotto_data)))}")
 
-   if st.button("🔮 ทำนายรอบถัดไป"):
+ if st.button("🔮 ทำนายรอบถัดไป"):
     st.markdown("### 🔮 ผลทำนายรอบถัดไป:")
 
     # เลขเด่น - ใหญ่ สีแดง
