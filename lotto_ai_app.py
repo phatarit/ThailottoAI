@@ -1,29 +1,26 @@
 import streamlit as st
 import pandas as pd
 from collections import Counter
+import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="AI ทำนายหวย", layout="centered")
 
 st.markdown("""
     <style>
-    body {
-        background-color: white !important;
-        color: black !important;
-    }
     .stApp {
         font-family: 'Sarabun', sans-serif;
         font-size: 18px;
     }
     .block-container {
         padding-top: 2rem;
+        padding-bottom: 2rem;
+        max-width: 720px;
     }
     </style>
 """, unsafe_allow_html=True)
 
-# st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Vessavana_Giant_at_Wat_Arun.jpg/800px-Vessavana_Giant_at_Wat_Arun.jpg", caption="ยักษ์เวสสุวรรณเสริมสิริมงคล", use_column_width=True)
-
 st.title("🎯 ระบบ AI วิเคราะห์และทำนายหวย")
-st.caption("ออกแบบสำหรับการใช้งานบน Windows และมือถือ | เวอร์ชันทดลอง")
+st.caption("เวอร์ชันทดลอง | รองรับ Windows และมือถือ")
 
 if "lotto_data" not in st.session_state:
     st.session_state.lotto_data = []
@@ -35,12 +32,19 @@ with col1:
 with col2:
     bottom2 = st.text_input("สองตัวล่าง", max_chars=2)
 
-if st.button("➕ เพิ่มข้อมูล"):
-    if top3.isdigit() and bottom2.isdigit():
-        st.session_state.lotto_data.append((top3.zfill(3), bottom2.zfill(2)))
-        st.success("เพิ่มข้อมูลแล้ว")
-    else:
-        st.error("กรุณากรอกตัวเลขเท่านั้น")
+col3, col4 = st.columns(2)
+with col3:
+    if st.button("➕ เพิ่มข้อมูล"):
+        if top3.isdigit() and bottom2.isdigit():
+            st.session_state.lotto_data.append((top3.zfill(3), bottom2.zfill(2)))
+            st.success("เพิ่มข้อมูลแล้ว")
+        else:
+            st.error("กรุณากรอกตัวเลขเท่านั้น")
+
+with col4:
+    if st.button("🗑️ ล้างข้อมูล"):
+        st.session_state.lotto_data = []
+        st.success("ล้างข้อมูลแล้ว")
 
 if st.session_state.lotto_data:
     df = pd.DataFrame(st.session_state.lotto_data, columns=["สามตัวบน", "สองตัวล่าง"])
@@ -54,7 +58,17 @@ if st.session_state.lotto_data:
     st.subheader("📊 ผลการวิเคราะห์")
     st.markdown(f"**เลขที่ออกบ่อยที่สุด:** {main_digit}")
     st.markdown(f"**ชุดเลขสองตัวแนะนำ:** {', '.join(pairs)}")
+
+    st.subheader("📈 กราฟความถี่ตัวเลข")
+    freq_dict = dict(freq)
+    fig, ax = plt.subplots()
+    ax.bar(freq_dict.keys(), freq_dict.values(), color="skyblue")
+    ax.set_title("ความถี่ของเลขที่ปรากฏ")
+    ax.set_xlabel("เลข")
+    ax.set_ylabel("จำนวนครั้ง")
+    st.pyplot(fig)
+
+    csv = df.to_csv(index=False).encode("utf-8-sig")
+    st.download_button("📤 ดาวน์โหลดข้อมูลย้อนหลัง (.CSV)", data=csv, file_name="lotto_history.csv", mime="text/csv")
 else:
     st.info("ยังไม่มีข้อมูลย้อนหลัง กรุณากรอกผลหวยก่อน")
-
-# st.image("https://www.matichonweekly.com/wp-content/uploads/2022/08/yant1.jpg", caption="ยันต์มหาลาภ เสริมโชคลาภ", use_column_width=True)
