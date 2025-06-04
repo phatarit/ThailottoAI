@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from collections import Counter
 import matplotlib.pyplot as plt
+import random
 
 st.set_page_config(page_title="AI ทำนายหวย", layout="centered")
 
@@ -20,6 +21,10 @@ if "lotto_data" not in st.session_state:
     st.session_state.lotto_data = []
 if "bulk_done" not in st.session_state:
     st.session_state.bulk_done = False
+
+# จำกัดข้อมูลไม่เกิน 10 งวดล่าสุด
+if len(st.session_state.lotto_data) > 10:
+    st.session_state.lotto_data = st.session_state.lotto_data[-10:]
 
 # --- INPUT BLOCK 1: หลายงวดรอบแรก ---
 if not st.session_state.bulk_done:
@@ -83,7 +88,7 @@ if st.session_state.bulk_done:
 def detect_common_digits(last, previous):
     return sorted(set("".join(last)) & set("".join(previous)))
 
-def find_missing_digits(data, recent=10):
+def find_missing_digits(data, recent=5):
     used = "".join([a + b for a, b in data[-recent:]])
     return [d for d in "0123456789" if d not in used]
 
@@ -100,6 +105,18 @@ def tail_digit_freq(data):
 def bottom_tail_freq(data):
     tails = [b[-1] for a, b in data]
     return Counter(tails).most_common()
+
+# --- จัดการลบ ---
+st.subheader("🧹 จัดการข้อมูลย้อนหลัง")
+if st.session_state.lotto_data:
+    selected_idx = st.selectbox("เลือกแถวที่ต้องการลบ", list(range(1, len(st.session_state.lotto_data)+1)))
+    if st.button("🗑️ ลบเฉพาะแถวที่เลือก"):
+        st.session_state.lotto_data.pop(selected_idx - 1)
+        st.success("ลบรายการที่เลือกแล้ว")
+
+    if st.button("🔥 ลบข้อมูลทั้งหมด"):
+        st.session_state.lotto_data.clear()
+        st.success("ลบข้อมูลทั้งหมดเรียบร้อยแล้ว")
 
 # --- วิเคราะห์ ---
 if st.session_state.lotto_data:
@@ -125,7 +142,6 @@ if st.session_state.lotto_data:
     st.markdown(f"**เลขลงท้ายบ่อย (สามตัวบน):** `{top_tail[0][0]}` ({top_tail[0][1]} ครั้ง)")
     st.markdown(f"**เลขลงท้ายบ่อย (สองตัวล่าง):** `{bottom_tail[0][0]}` ({bottom_tail[0][1]} ครั้ง)")
 
-    # Pie chart
     st.subheader("🥧 กราฟความถี่ (Pie Chart)")
     labels = [item[0] for item in freq]
     sizes = [item[1] for item in freq]
@@ -134,22 +150,18 @@ if st.session_state.lotto_data:
     ax.axis('equal')
     st.pyplot(fig)
 
-    # วิเคราะห์เสริม
     st.subheader("🧠 วิเคราะห์สูตรเพิ่มเติม")
     st.markdown(f"**เลขที่หายไปนาน:** {', '.join(find_missing_digits(st.session_state.lotto_data))}")
     st.markdown(f"**เลขข้างเคียงจากสถิติ:** {', '.join(map(str, adjacent_hot_digits(st.session_state.lotto_data)))}")
 
-    # ทำนาย
     if st.button("🔮 ทำนายรอบถัดไป"):
         st.markdown("### 🔮 ผลทำนายรอบถัดไป:")
         st.markdown(f"<h2 style='color:red;'>เลขเด่น: {main_digit}</h2>", unsafe_allow_html=True)
         pair_html = " ".join([f"<span style='font-size:28px; color:red;'>{pair}</span>" for pair in main_pairs])
         st.markdown(f"<div>เลขสองตัวแนะนำ: {pair_html}</div>", unsafe_allow_html=True)
-        import random
         lucky_3 = str(random.randint(0, 9)) + main_digit + str(random.randint(0, 9))
         st.markdown(f"<h4 style='color:red;'>เลขเสียวสามตัว: {lucky_3}</h4>", unsafe_allow_html=True)
 
-    # Download CSV
     csv = df.to_csv(index=False).encode("utf-8-sig")
     st.download_button("📥 ดาวน์โหลดข้อมูลย้อนหลัง", data=csv, file_name="lotto_history.csv", mime="text/csv")
 else:
