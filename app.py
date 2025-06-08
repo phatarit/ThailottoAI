@@ -130,11 +130,11 @@ with left:
     st.caption(f'Hit‑rate ≈ {acc_single*100:.1f}%')
 with right:
     st.subheader('สองตัวล่าง (20)')
-    st.code(' '.join(next_two))
+    st.write(" ".join(next_two))
     st.caption(f'Hit‑rate ≈ {acc_two*100:.1f}% (ถือกลับได้)')
 
 st.subheader('สามตัวบน (30)')
-st.code(' '.join(next_three))
+st.write(" ".join(next_three))
 st.caption(f'Hit‑rate ≈ {acc_three*100:.1f}%')
 
 with st.expander('📊 วิธีคำนวณเปอร์เซ็นย้อนหลัง'):
