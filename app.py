@@ -1,31 +1,25 @@
-# ThaiLottoAI – Predict Thai Government Lottery (3‑digit on top / 2‑digit bottom)
+# ThaiLottoAI v2 – Multiple formulas with hit‑rate estimate
 import streamlit as st
 import pandas as pd
-from collections import Counter
+from collections import Counter, defaultdict
 from itertools import permutations
-from datetime import datetime, timedelta
-import os, traceback
+import math, traceback
 
-st.set_page_config(page_title="ThaiLottoAI", page_icon="🎯")
-st.title("🎯 ThaiLottoAI – Advanced Thai Lottery Analyzer")
+st.set_page_config(page_title="ThaiLottoAI v2", page_icon="🎯")
+st.title("🎯 ThaiLottoAI – Multi‑Formula Analyzer with Hit‑Rate")
 
-st.markdown(
-    """ใช้สูตรสถิติ 6 ชั้น (Run, Sum‑mod, Hot, Pair‑Reverse, HL/OE Switch, No‑Double)
-    เพื่อคัดกรองเลข **สามตัวบน** และ **สองตัวล่าง** โดยอาศัยข้อมูลย้อนหลัง
-    • รองรับการวางข้อมูลทีละหลายงวด หรือเพิ่มภายหลัง
-    • รูปแบบ: `774 81` (สามตัวบน เว้นวรรค สองตัวล่าง) หนึ่งบรรทัดต่อหนึ่งงวด""")
+# ---------- Input ----------
+st.markdown("ใส่ข้อมูลย้อนหลัง: สามตัวบน เว้นวรรค สองตัวล่าง เช่น `774 81` หนึ่งบรรทัดต่อหนึ่งงวด")
+data = st.text_area("📋 ข้อมูลย้อนหลัง", height=250)
 
-# ---------- INPUT AREA ----------
-data_input = st.text_area("📋 วางข้อมูลย้อนหลังหลายบรรทัด (*สามตัวบน เว้นวรรค สองตัวล่าง*)", height=250)
-
-extra_inputs = []
+extra = []
 with st.expander("➕ เพิ่มข้อมูลทีละงวด"):
     for i in range(1, 6):
         v = st.text_input(f"งวด #{i}", key=f"row_{i}")
-        if v: extra_inputs.append(v)
+        if v:
+            extra.append(v)
 
-# Merge & clean lines
-raw_lines = [l for l in (data_input.splitlines() + extra_inputs) if l.strip()]
+raw_lines = [l for l in (data.splitlines() + extra) if l.strip()]
 draws = []
 for idx, line in enumerate(raw_lines, 1):
     try:
@@ -37,76 +31,121 @@ for idx, line in enumerate(raw_lines, 1):
     except ValueError:
         st.warning(f"ข้ามบรรทัด {idx}: ไม่พบช่องว่างแบ่งบน/ล่าง → {line}")
 
-if len(draws) < 5:
-    st.info("⚠️ ต้องมีข้อมูลอย่างน้อย 5 งวดเพื่อเริ่มวิเคราะห์")
-    st.stop()
+if len(draws) < 40:
+    st.info("⚠️ ต้องมีข้อมูลอย่างน้อย 40 งวด (เพื่อเทรน Markov)"); st.stop()
 
 df = pd.DataFrame(draws, columns=["สามตัวบน", "สองตัวล่าง"])
-st.success(f"โหลดข้อมูลสำเร็จ {len(df)} งวด")
+st.success(f"โหลดข้อมูล {len(df)} งวด")
 st.dataframe(df, use_container_width=True)
 
-# ---------- CORE FORMULAS ----------
-def predict(df: pd.DataFrame, two_limit: int = 12, three_limit: int = 10):
-    all_digits = "".join("".join(pair) for pair in df.values)
-    hot = [d for d, _ in Counter(all_digits).most_common(5)]
+# ---------- Helper ----------
+def exp_hot_single(history, window=27, alpha=0.8):
+    """Exponential weighted frequency – return digit with max score"""
+    scores = Counter()
+    recent = history[-window:] if len(history) >= window else history
+    for n_back, (top, bottom) in enumerate(reversed(recent)):
+        w = alpha ** n_back
+        for d in top + bottom:
+            scores[d] += w
+    return max(scores, key=scores.get)
 
-    last_top, last_bottom = df.iloc[-1]
-    run_digits = list(last_bottom)
+def build_transitions(history):
+    trans = defaultdict(Counter)
+    for prev, curr in zip(history[:-1], history[1:]):
+        trans[prev[1]][curr[1]] += 1
+    return trans
 
-    sum_mod = str(sum(map(int, last_top)) % 10)
-    pair_rev = last_bottom[::-1]
-
-    # candidate pool (unique, ordered)
-    pool = []
-    for d in run_digits + [sum_mod] + hot:
-        if d not in pool:
-            pool.append(d)
-    # pad to at least 6 digits
-    while len(pool) < 6:
-        pool.append(str((int(pool[-1]) + 1) % 10))
-
-    # two‑digit prediction
-    want_odd = int(last_bottom[-1]) % 2 == 0  # if last even → want odd
-    two_list = []
-    for a in pool:
-        for b in pool:
-            if a == b:         # No‑Double (พักเบิ้ล)
-                continue
-            if want_odd and int(b) % 2 == 0:
-                continue
-            two_list.append(a + b)
-    two_list = two_list[:two_limit]
-
-    # three‑digit prediction
-    three_list = []
-    for perm in permutations(pool, 3):
-        if len(set(perm)) == 3:
-            three_list.append("".join(perm))
-            if len(three_list) == three_limit:
+def markov20_predict(history, topk=20):
+    trans = build_transitions(history)
+    last = history[-1][1]
+    cand = [c for c, _ in trans[last].most_common(topk)]
+    # fill if not enough
+    if len(cand) < topk:
+        overall = Counter()
+        for d in trans.values():
+            overall.update(d)
+        for c, _ in overall.most_common():
+            if c not in cand:
+                cand.append(c)
+            if len(cand) == topk:
                 break
+    return cand[:topk]
 
-    meta = {
-        "pool": pool,
-        "sum_mod": sum_mod,
-        "pair_reverse": pair_rev,
-        "want_odd_bottom": want_odd
-    }
-    return two_list, three_list, meta
+def hot_digits(history, window=10, n=5):
+    rec = history[-window:] if len(history) >= window else history
+    digits = "".join("".join(pair) for pair in rec)
+    return [d for d, _ in Counter(digits).most_common(n)]
 
-# ---------- PREDICTION ----------
-two_digits, three_digits, meta = predict(df)
+def run_digits(history):
+    return list(history[-1][1])
 
-st.header("🔮 สรุปผลคัดกรอง (สูตรขั้นสูง)")
-st.subheader("สองตัว (บน/ล่าง)")
-st.code(" ".join(two_digits))
+def sum_mod(history):
+    return str(sum(map(int, history[-1][0])) % 10)
 
-st.subheader("สามตัวบน")
-st.code(" ".join(three_digits))
+def hybrid30_predict(history, pool_size=10, topk=30):
+    pool = []
+    pool.extend(run_digits(history))
+    pool.append(sum_mod(history))
+    pool.extend(hot_digits(history, window=5, n=4))
+    pool.extend(hot_digits(history, window=len(history), n=4))
+    pool = list(dict.fromkeys(pool))[:pool_size]
 
-with st.expander("ℹ️ ข้อมูลเสริมสูตร (debug)"):
-    st.write("*Candidate Digits*:", meta["pool"])
-    st.write("SUM‑MOD 10 ของงวดล่าสุด:", meta["sum_mod"])
-    st.write("คู่กลับ (สองตัวล่างล่าสุด):", meta["pair_reverse"])
-    st.write("ต้องการให้หลักหน่วยล่างเป็นคี่? →", meta["want_odd_bottom"])
+    # score by weighted freq 30 งวด
+    scores = Counter()
+    recent = history[-30:]
+    for idx, (top, bottom) in enumerate(recent):
+        w = 1.0 - (idx / 30) * 0.9
+        for d in top + bottom:
+            scores[d] += w
 
-st.caption("© 2025 ThaiLottoAI – minimal demo")
+    perms = ["".join(p) for p in permutations(pool, 3) if len(set(p)) == 3]
+    perms.sort(key=lambda x: -(scores[x[0]] + scores[x[1]] + scores[x[2]]))
+    return perms[:topk]
+
+# ---------- Back‑test evaluator ----------
+def walk_forward(history, predictor, hit_fn, min_start):
+    hits = 0; total = 0
+    for i in range(min_start, len(history)):
+        past = history[:i]
+        pred = predictor(past)
+        actual = history[i]
+        if hit_fn(pred, actual):
+            hits += 1
+        total += 1
+    return hits / total if total else 0.0, total
+
+# Hit functions
+hit_single = lambda pred, act: pred in act[0] or pred in act[1]
+hit_two = lambda preds, act: act[1] in preds or act[1][::-1] in preds
+hit_three = lambda preds, act: act[0] in preds
+
+# ---------- Compute stats ----------
+single_acc, _ = walk_forward(draws, exp_hot_single, hit_single, 27)
+two_acc, _ = walk_forward(draws, lambda h: markov20_predict(h, 20), hit_two, 40)
+three_acc, _ = walk_forward(draws, lambda h: hybrid30_predict(h, 10, 30), hit_three, 40)
+
+# ---------- Predict next draw ----------
+next_single = exp_hot_single(draws)
+next_two20 = markov20_predict(draws, 20)
+next_three30 = hybrid30_predict(draws, 10, 30)
+
+st.header("🔮 คาดการณ์งวดถัดไป (Multi‑Formula)")
+col1, col2 = st.columns(2)
+with col1:
+    st.subheader("ตัวเด่น – EXP‑HOT 27")
+    st.markdown(f"**{next_single}**")
+    st.caption(f"อัตราถูกย้อนหลัง ~ {single_acc*100:.1f}%")
+
+with col2:
+    st.subheader("สองตัวล่าง – MARKOV‑20")
+    st.code(" ".join(next_two20))
+    st.caption(f"อัตราถูกย้อนหลัง ~ {two_acc*100:.1f}% (ถือตรง/กลับ)")
+st.subheader("สามตัวบน – HYBRID‑30")
+st.code(" ".join(next_three30))
+st.caption(f"อัตราถูกย้อนหลัง ~ {three_acc*100:.1f}% (ใน 30 ชุด)")
+
+st.markdown("---")
+with st.expander("📊 วิธีคำนวณเปอร์เซ็นย้อนหลัง"):
+    st.write("• Walk‑forward back‑test: ทำนายงวดถัดไปจากข้อมูลทั้งหมดก่อนหน้าทุกครั้งแล้วค่อยวัดผล")             .write("• ชุดล่างถือทั้งตรงและกลับ (AB/BA) เพื่อเทียบ")             .write("• EXP‑HOT ใช้ถ่วงน้ำหนัก 0.8^n, Markov ใช้ top 20 คู่, Hybrid ใช้ pool 10 → 30 permutations")
+
+st.caption("© 2025 ThaiLottoAI v2 – with Prob‑Estimates")
