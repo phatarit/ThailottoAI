@@ -88,14 +88,18 @@ st.markdown(f"<div style='font-size:38px;color:red;text-align:center'>"
 
 c1,c2=st.columns(2)
 with c1:
-    st.subheader("สองตัว (20 ชุด ไม่สนตำแหน่ง)")
-    st.markdown(f"<span style='font-size:22px;color:red'>{'  '.join(two20)}</span>",
-                unsafe_allow_html=True)
+    st.subheader('สองตัวล่าง / ท้ายบน (20)')
+    st.markdown(
+        f"<div style='font-size:22px;color:red'>{pretty(two20,10)}</div>",
+        unsafe_allow_html=True,
+    )
     st.caption(f"Hit≈{acc_two*100:.1f}%")
 with c2:
-    st.subheader("สามตัว (20 ชุด เต็ง-โต๊ด)")
-    st.markdown(f"<span style='font-size:22px;color:red'>{'  '.join(three20)}</span>",
-                unsafe_allow_html=True)
+    st.subheader('สามตัวบน (20)')
+    st.markdown(
+        f"<div style='font-size:22px;color:red'>{pretty(three20,10)}</div>",
+        unsafe_allow_html=True,
+    )
     st.caption(f"Hit≈{acc_three*100:.1f}%")
 
 st.subheader("🚩 เลขเจาะ")
