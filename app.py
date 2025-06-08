@@ -137,11 +137,6 @@ st.subheader('สามตัวบน (30)')
 st.code(' '.join(next_three))
 st.caption(f'Hit‑rate ≈ {acc_three*100:.1f}%')
 
-...
-st.subheader('สามตัวบน (30)')
-st.code(' '.join(next_three))
-st.caption(f'Hit-rate ≈ {acc_three*100:.1f}%')
-
 with st.expander('📊 วิธีคำนวณเปอร์เซ็นย้อนหลัง'):
     st.markdown(
         """
