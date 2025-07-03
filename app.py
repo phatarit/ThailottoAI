@@ -1,248 +1,114 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 from collections import Counter, defaultdict
 from itertools import combinations
+from sklearn.neural_network import MLPClassifier
 
 # ─────────────────── CONFIG ───────────────────
 st.set_page_config(page_title="ThaiLottoAI", page_icon="🎯", layout="centered")
-st.title("🎯 ThaiLottoAI")
+st.title("🎯 ThaiLottoAI - Enhanced Next-Draw Predictor")
 
 # ────────────────── SESSION STATE ──────────────────
-if "history_raw" not in st.session_state:
-    st.session_state.history_raw = ""
-if "premium" not in st.session_state:
-    st.session_state.premium = False
+if "history" not in st.session_state:
+    st.session_state.history = []  # store tuples of (triple, pair)
 
 # ────────────────── INPUT ──────────────────
 st.markdown("วางผลย้อนหลัง **สามตัวบน เว้นวรรค สองตัวล่าง** ต่อเนื่องกันคนละบรรทัด เช่น `774 81`")
-raw = st.text_area("📋 ข้อมูลย้อนหลัง", value=st.session_state.history_raw, height=250)
+raw = st.text_area("📋 ข้อมูลย้อนหลัง", height=300,
+                   placeholder="774 81\n227 06\n403 94\n...\n")
 
-col_save, col_clear = st.columns(2)
-with col_save:
-    if st.button("💾 บันทึกข้อมูล"):
-        st.session_state.history_raw = raw
-        st.success("บันทึกข้อมูลเรียบร้อย ✔")
-with col_clear:
-    if st.button("🗑 ล้างข้อมูลที่บันทึก"):
-        st.session_state.history_raw = ""
-        st.success("ล้างข้อมูลแล้ว")
-
-# ────────────────── PARSE DRAWS ──────────────────
-extra_rows = []
-
+# ────────────────── PARSE & VALIDATE ──────────────────
 draws = []
 for idx, line in enumerate(raw.splitlines(), 1):
-    try:
-        t, b = line.split()
-        if len(t) == 3 and len(b) == 2 and t.isdigit() and b.isdigit():
+    parts = line.strip().split()
+    if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+        t, b = parts
+        if len(t)==3 and len(b)==2:
             draws.append((t, b))
         else:
-            st.warning(f"ข้ามบรรทัด {idx}: รูปแบบผิด → {line}")
-    except ValueError:
-        if line.strip():
-            st.warning(f"ข้ามบรรทัด {idx}: ไม่พบช่องว่าง → {line}")
+            st.warning(f"ข้ามบรรทัด {idx}: รูปแบบไม่ถูกต้อง → {line}")
+    elif line.strip():
+        st.warning(f"ข้ามบรรทัด {idx}: ไม่พบข้อมูลที่ใช้ได้ → {line}")
 
-if len(draws) < 40:
-    st.info("⚠️ ต้องมีข้อมูล ≥ 40 งวด")
+if len(draws) < 60:
+    st.info("กรุณาป้อนข้อมูลย้อนหลังอย่างน้อย 60 งวด เพื่อความแม่นยำสูงสุด")
     st.stop()
 
-st.dataframe(pd.DataFrame(draws, columns=["สามตัวบน", "สองตัวล่าง"]), use_container_width=True)
+# update session history
+st.session_state.history = draws
 
-# ────────────────── HELPER FUNCTIONS ──────────────────
+# ────────────────── PREPROCESS ──────────────────
+# Flatten draws into arrays for triples and pairs
+triples = [int(t) for t, _ in draws]
+pairs = [int(b) for _, b in draws]
 
-def hot_digits(hist, win, n=3):
-    seg = hist[-win:] if len(hist) >= win else hist
-    return [d for d, _ in Counter("".join("".join(x) for x in seg)).most_common(n)]
+# ────────────────── WEIGHTED FREQUENCY PREDICTION ──────────────────
+def weighted_freq(sequence, window, decay=0.85):
+    seq = sequence[-window:]
+    weights = [decay**i for i in range(len(seq)-1, -1, -1)]
+    cnt = defaultdict(float)
+    for val, w in zip(seq, weights):
+        cnt[val] += w
+    return sorted(cnt.items(), key=lambda x: -x[1])
 
-def pretty(lst, per_line=10):
-    chunk = ["  ".join(lst[i : i + per_line]) for i in range(0, len(lst), per_line)]
-    return "<br>".join(chunk)
-
-def unordered2(p):
-    return "".join(sorted(p))
-
-def unordered3(t):
-    return "".join(sorted(t))
-
-def run_digits(hist):
-    return list(hist[-1][1])
-
-def sum_mod(hist):
-    return str(sum(map(int, hist[-1][0])) % 10)
-
-hot10 = hot_digits(draws, 10)
-hot20 = hot_digits(draws, 20)
-hot30 = hot_digits(draws, 30)
-hot40 = hot_digits(draws, 40)
-
-# ────────────────── CORE ALGORITHMS ──────────────────
-
-def exp_hot(hist, win=27):
-    sc = Counter()
-    for i, (t, b) in enumerate(reversed(hist[-win:])):
-        w = 0.8 ** i
-        for d in t + b:
-            sc[d] += w
-    for d in hot10 + hot20 + hot30 + hot40:
-        sc[d] += 0.3
-    return max(sc, key=sc.get)
-
-
-def build_trans(hist):
-    M = defaultdict(Counter)
-    for (pt, pb), (ct, cb) in zip(hist[:-1], hist[1:]):
-        M[unordered2(pb)][unordered2(cb)] += 1
-    return M
-
-
-def markov20_pairs(hist):
-    trans = build_trans(hist)
-    last = unordered2(hist[-1][1])
-    base = [p for p, _ in trans[last].most_common(20)]
-
-    boost = set(hot10 + hot20 + hot30 + hot40)
-    for a, b in combinations(boost, 2):
-        p = unordered2(a + b)
-        if p not in base:
-            base.append(p)
-        if len(base) == 20:
+# Predict next triple/pair by weighted freq & exclude overly frequent
+def predict_weighted_next(seq, window, topk, exclude_count=2):
+    freq = weighted_freq(seq, window)
+    hist_count = Counter(seq)
+    preds = []
+    for val, _ in freq:
+        if hist_count[val] < exclude_count:
+            preds.append(val)
+        if len(preds) == topk:
             break
-    return base[:20]
+    return preds
 
+# ────────────────── ML-BASED PREDICTION ──────────────────
+def ml_predict_seq(sequence, window, topk):
+    X, y = [], []
+    for i in range(len(sequence)-window):
+        X.append(sequence[i:i+window])
+        y.append(sequence[i+window])
+    X, y = np.array(X), np.array(y)
+    if len(X) < window*2:
+        return []
+    model = MLPClassifier(hidden_layer_sizes=(64,32), max_iter=2000, random_state=42)
+    model.fit(X, y)
+    probs = model.predict_proba([sequence[-window:]])[0]
+    classes = model.classes_
+    top_idx = np.argsort(probs)[-topk:][::-1]
+    return [classes[i] for i in top_idx]
 
-def hybrid20_combos(hist, pool_sz=12, k=20):
-    pool = (
-        run_digits(hist)
-        + [sum_mod(hist)]
-        + hot_digits(hist, 5, 3)
-        + hot_digits(hist, len(hist), 3)
-        + hot10
-        + hot20
-        + hot30
-        + hot40
-    )
-    pool = list(dict.fromkeys(pool))[:pool_sz]
+# ────────────────── COMBINE METHODS (ENSEMBLE) ──────────────────
+win_w = 100  # window for weighted freq
+win_ml = 60  # window for ML training
+k_pairs = 4
+k_triples = 2
 
-    score = Counter()
-    for i, (t, b) in enumerate(hist[-30:]):
-        w = 1 - i / 30 * 0.9
-        for d in t + b:
-            score[d] += w
+# Weighted predictions
+w_triples = predict_weighted_next(triples, win_w, k_triples)
+w_pairs = predict_weighted_next(pairs, win_w, k_pairs)
 
-    combos = {"".join(sorted(c)) for c in combinations(pool, 3)}
-    combos = sorted(combos, key=lambda x: -(score[x[0]] + score[x[1]] + score[x[2]]))
-    return combos[:k]
+# ML predictions
+ml_triples = ml_predict_seq(triples, win_ml, k_triples)
+ml_pairs = ml_predict_seq(pairs, win_ml, k_pairs)
 
-# ────────────────── BACK‑TEST HIT RATE ──────────────────
+# Ensemble: intersect & merge
+def merge_preds(w, m, k):
+    # take intersection first
+    inter = [v for v in w if v in m]
+    merged = inter + [v for v in w if v not in inter] + [v for v in m if v not in inter]
+    return merged[:k]
 
-def walk(hist, pred_fn, hit_fn, start):
-    hit = tot = 0
-    for i in range(start, len(hist)):
-        if hit_fn(pred_fn(hist[:i]), hist[i]):
-            hit += 1
-        tot += 1
-    return hit / tot if tot else 0.0
-
-hit_two = (
-    lambda preds, act: unordered2(act[1]) in preds or unordered2(act[0][1:]) in preds
-)
-
-def hit_three(preds, act):
-    return unordered3(act[0]) in preds
-
-acc_two = walk(draws, markov20_pairs, hit_two, 40)
-acc_three = walk(draws, hybrid20_combos, hit_three, 40)
-
-# ────────────────── PREDICT NEXT ──────────────────
-
-single = exp_hot(draws)
-two20 = markov20_pairs(draws)
-three20 = hybrid20_combos(draws)
-
-# รวม 2 ตัวท้ายบนเข้าชุดล่าง
-for tail in {unordered2(t[1:]) for t, _ in [draws[-1]]}:
-    if tail not in two20:
-        two20.append(tail)
-
-two20 = two20[:20]
-
-focus_two = two20[:5]
-focus_three = three20[:3]
-
-# ────────────────── PREMIUM PAYMENT ──────────────────
-
-st.header("🏆 อัปเกรดเป็น Premium 59 บาท")
-st.image("https://promptpay.io/0869135982/59.png", width=220)
-slip = st.file_uploader("แนบสลิปชำระเงิน", type=["jpg", "jpeg", "png", "pdf"])
-
-if slip is not None:
-    st.success("ได้รับสลิปแล้ว กรุณาให้แอดมินตรวจสอบ ⏳")
-
-    with st.expander("🔐 สำหรับแอดมินเท่านั้น"):
-        with st.form("admin_unlock"):
-            admin_pass = st.text_input("รหัสแอดมิน", type="password")
-            unlock = st.form_submit_button("ปลดล็อค Premium")
-            if unlock:
-                if admin_pass == "Mnopphata#2":
-                    st.session_state.premium = True
-                    st.success("✅ Premium ปลดล็อคแล้ว!")
-                else:
-                    st.error("รหัสผิด ❌")
+next_triples = merge_preds(w_triples, ml_triples, k_triples)
+next_pairs = merge_preds(w_pairs, ml_pairs, k_pairs)
 
 # ────────────────── DISPLAY RESULTS ──────────────────
+st.header("📊 ผลทำนายงวดถัดไป 📊")
+st.subheader("🔴 สามตัวบน (2 ชุด)")
+st.write([f"{v:03d}" for v in next_triples])
+st.subheader("🟢 สองตัวล่าง (4 ชุด)")
+st.write([f"{v:02d}" for v in next_pairs])
 
-if st.session_state.premium:
-    # PREMIUM VIEW
-    st.markdown(
-        f"<div style='font-size:44px;color:red;text-align:center'>ตัวเด่น: {single}</div>",
-        unsafe_allow_html=True,
-    )
-
-    c1, c2 = st.columns(2)
-    with c1:
-        st.subheader("สองตัว (20 ชุด ไม่สนตำแหน่ง)")
-        st.markdown(
-            f"<div style='font-size:22px;color:red'>{pretty(two20,10)}</div>",
-            unsafe_allow_html=True,
-        )
-        st.caption(f"Hit≈{acc_two*100:.1f}%")
-
-    with c2:
-        st.subheader("สามตัว (20 ชุด เต็ง‑โต๊ด)")
-        st.markdown(
-            f"<div style='font-size:22px;color:red'>{pretty(three20,10)}</div>",
-            unsafe_allow_html=True,
-        )
-        st.caption(f"Hit≈{acc_three*100:.1f}%")
-
-    st.subheader("🚩 เลขเจาะ (Premium)")
-    st.markdown(
-        f"<div style='font-size:26px;color:red'>สองตัว: {'  '.join(focus_two)}<br>"
-        f"สามตัว: {'  '.join(focus_three)}</div>",
-        unsafe_allow_html=True,
-    )
-else:
-    # FREE VIEW
-    top2 = hot_digits(draws, 10, 2)
-    main, runner = top2[0], (top2[1] if len(top2) > 1 else "-")
-
-    st.markdown(
-        f"<div style='font-size:40px;color:red;text-align:center'>ตัวเด่น: {main}</div>",
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        f"<div style='font-size:32px;color:orange;text-align:center'>ตัวรอง: {runner}</div>",
-        unsafe_allow_html=True,
-    )
-
-    st.subheader("🚩 เลขเจาะ (Free Preview)")
-    st.markdown(
-        f"<div style='font-size:24px;color:red'>สองตัว (5 ชุด): {'  '.join(focus_two)}<br>"
-        f"สามตัว (3 ชุด): {'  '.join(focus_three)}</div>",
-        unsafe_allow_html=True,
-    )
-
-    st.info("ปลดล็อค Premium เพื่อดูชุดตัวเลขเต็ม 20 ชุด และสถิติย้อนหลังทั้งหมด!")
-
-# ────────────────── FOOTER ──────────────────
-st.caption("© 2025 ThaiLottoAI")
+st.caption("สูตร: Weighted Frequency + ML Ensemble | พัฒนาโดย ThaiLottoAI")
