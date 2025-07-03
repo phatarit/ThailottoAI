@@ -3,7 +3,16 @@ import pandas as pd
 import numpy as np
 from collections import Counter, defaultdict
 from itertools import combinations
-from sklearn.neural_network import MLPClassifier
+
+# ─────────────────── ATTEMPT IMPORT ML DEPENDENCY ───────────────────
+try:
+    from sklearn.neural_network import MLPClassifier
+except ModuleNotFoundError:
+    st.error(
+        "**Error:** Library `scikit-learn` ยังไม่ถูกติดตั้งใน environment นี้\n"
+        "กรุณาเพิ่ม `scikit-learn` ในไฟล์ requirements.txt ของคุณ แล้ว redeploy ใหม่"
+    )
+    st.stop()
 
 # ─────────────────── CONFIG ───────────────────
 st.set_page_config(page_title="ThaiLottoAI", page_icon="🎯", layout="centered")
@@ -39,11 +48,10 @@ if len(draws) < 60:
 st.session_state.history = draws
 
 # ────────────────── PREPROCESS ──────────────────
-# Flatten draws into arrays for triples and pairs
 triples = [int(t) for t, _ in draws]
 pairs = [int(b) for _, b in draws]
 
-# ────────────────── WEIGHTED FREQUENCY PREDICTION ──────────────────
+# ────────────────── WEIGHTED FREQUENCY PREDICTION ───────────────────
 def weighted_freq(sequence, window, decay=0.85):
     seq = sequence[-window:]
     weights = [decay**i for i in range(len(seq)-1, -1, -1)]
@@ -52,7 +60,6 @@ def weighted_freq(sequence, window, decay=0.85):
         cnt[val] += w
     return sorted(cnt.items(), key=lambda x: -x[1])
 
-# Predict next triple/pair by weighted freq & exclude overly frequent
 def predict_weighted_next(seq, window, topk, exclude_count=2):
     freq = weighted_freq(seq, window)
     hist_count = Counter(seq)
@@ -64,7 +71,7 @@ def predict_weighted_next(seq, window, topk, exclude_count=2):
             break
     return preds
 
-# ────────────────── ML-BASED PREDICTION ──────────────────
+# ────────────────── ML-BASED PREDICTION ───────────────────
 def ml_predict_seq(sequence, window, topk):
     X, y = [], []
     for i in range(len(sequence)-window):
@@ -80,23 +87,15 @@ def ml_predict_seq(sequence, window, topk):
     top_idx = np.argsort(probs)[-topk:][::-1]
     return [classes[i] for i in top_idx]
 
-# ────────────────── COMBINE METHODS (ENSEMBLE) ──────────────────
-win_w = 100  # window for weighted freq
-win_ml = 60  # window for ML training
-k_pairs = 4
-k_triples = 2
-
-# Weighted predictions
+# ────────────────── ENSEMBLE METHODS ───────────────────
+win_w, win_ml = 100, 60
+k_pairs, k_triples = 4, 2
 w_triples = predict_weighted_next(triples, win_w, k_triples)
 w_pairs = predict_weighted_next(pairs, win_w, k_pairs)
-
-# ML predictions
 ml_triples = ml_predict_seq(triples, win_ml, k_triples)
 ml_pairs = ml_predict_seq(pairs, win_ml, k_pairs)
 
-# Ensemble: intersect & merge
 def merge_preds(w, m, k):
-    # take intersection first
     inter = [v for v in w if v in m]
     merged = inter + [v for v in w if v not in inter] + [v for v in m if v not in inter]
     return merged[:k]
@@ -104,7 +103,7 @@ def merge_preds(w, m, k):
 next_triples = merge_preds(w_triples, ml_triples, k_triples)
 next_pairs = merge_preds(w_pairs, ml_pairs, k_pairs)
 
-# ────────────────── DISPLAY RESULTS ──────────────────
+# ────────────────── DISPLAY RESULTS ───────────────────
 st.header("📊 ผลทำนายงวดถัดไป 📊")
 st.subheader("🔴 สามตัวบน (2 ชุด)")
 st.write([f"{v:03d}" for v in next_triples])
