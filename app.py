@@ -1,10 +1,9 @@
-# app_thailotto_plus.py
+# app_thailotto_clean.py
 # -*- coding: utf-8 -*-
 import streamlit as st
 from collections import Counter, defaultdict
-import re, random, json, io
+import re, random
 import pandas as pd
-from urllib.parse import urlencode
 
 # ===================== PAGE =====================
 st.set_page_config(
@@ -13,94 +12,71 @@ st.set_page_config(
     layout="centered"
 )
 
-# ===================== STYLE (ธงชาติไทย) =====================
+# ===================== STYLE (พื้นน้ำเงิน ตัวอักษรขาว, เลขสีแดง) =====================
 st.markdown("""
 <style>
 :root{
   --thai-blue:#00247D;
-  --thai-red:#CE1126;
+  --thai-red:#FF2A2A;
   --thai-white:#FFFFFF;
 }
-.stApp { background: var(--thai-white); }
+/* ซ่อน Top bar / Footer ของ Streamlit */
+#MainMenu {visibility: hidden;}
+header {visibility: hidden;}
+footer {visibility: hidden;}
+
+.stApp { background: var(--thai-blue); color: var(--thai-white); }
 .block-container{ max-width: 980px; }
-.title { color: var(--thai-blue); font-weight: 900; font-size: 2.0rem; }
-.subtitle { color: var(--thai-blue); opacity:.85; margin-top:2px; }
+.title { color: var(--thai-white); font-weight: 900; font-size: 2.0rem; }
+.subtitle { color: var(--thai-white); opacity:.95; margin-top:2px; }
+
 .card{
-  background:#fff; border:4px solid var(--thai-blue); border-radius:16px;
-  padding:14px 16px; margin:12px 0 16px 0; box-shadow:0 8px 20px rgba(0,0,0,.06);
+  background: rgba(255,255,255,0.06); border:2px solid rgba(255,255,255,0.25);
+  border-radius:16px; padding:14px 16px; margin:12px 0 16px 0;
+  box-shadow:0 8px 20px rgba(0,0,0,.12);
 }
-.heading{ color: var(--thai-blue); font-weight:900; font-size:1.12rem; margin-bottom:6px; }
+.heading{ color: var(--thai-white); font-weight:900; font-size:1.1rem; margin-bottom:6px; }
+
+textarea, .stTextInput input, .stSelectbox [data-baseweb="select"] div{
+  color: var(--thai-white) !important;
+}
+.stTextArea textarea{ background: rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.25); }
+
 .num-xl,.num-lg,.num-md{ color: var(--thai-red); font-weight:900; line-height:1.25; word-break: break-word; }
 .num-xl{ font-size:2.6rem; }
 .num-lg{ font-size:2.2rem; }
 .num-md{ font-size:2.0rem; }
-.badge{
-  display:inline-block; color:var(--thai-red); border:2px solid var(--thai-red);
-  border-radius:12px; padding:4px 12px; margin:4px 8px 0 0; font-weight:900; font-size:1.3rem;
-}
+
 .kbd{
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New",monospace;
-  background:#eef2ff; border:1px solid #c7d2fe; border-radius:8px; padding:2px 8px;
+  background: rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.35); border-radius:8px; padding:2px 8px;
+  color: var(--thai-white);
 }
-.row{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
-.small{ font-size:.92rem; color:#1f2937; }
-.footer { text-align:center; margin: 18px 0 8px 0; color:#1f2937; font-weight:700; }
-.btnrow { display:flex; gap:8px; flex-wrap:wrap; }
+
+.footer { text-align:center; margin: 18px 0 8px 0; color: var(--thai-white); font-weight:700; }
+.stDownloadButton button{
+  background: rgba(255,255,255,0.12); border:2px solid rgba(255,255,255,0.5);
+  color: var(--thai-white); font-weight:800; border-radius:10px;
+}
+.copybtn{
+  background: rgba(255,255,255,0.12); border:2px solid rgba(255,255,255,0.5);
+  color: var(--thai-white); font-weight:800; border-radius:10px; padding:6px 10px; cursor:pointer;
+}
 </style>
 """, unsafe_allow_html=True)
 
 # ===================== HEADER =====================
 st.markdown('<div class="title">ThaiLotto</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">วางผลย้อนหลังรูปแบบ: <span class="kbd">สามตัวบน  สองตัวล่าง</span> (คั่นด้วยช่องว่างหรือแท็บ) ต่อบรรทัด</div>', unsafe_allow_html=True)
-
-# ===================== QUERY PARAM PRESETS =====================
-q = st.experimental_get_query_params()
-if "seed" in q:
-    try: st.session_state["seed"] = int(q["seed"][0])
-    except: pass
-if "mode" in q:
-    st.session_state["mode"] = q["mode"][0]
-if "k" in q:
-    try: st.session_state["k"] = int(q["k"][0])
-    except: pass
+st.markdown('<div class="subtitle">วางผลย้อนหลังไม่น้อยกว่า10 งวด: '
+            '<span class="kbd">สามตัวบน</span> (วรรคหรือแท็บ 1 ครั้ง) '
+            '<span class="kbd">สองตัวล่าง</span> ต่อบรรทัด</div>', unsafe_allow_html=True)
 
 # ===================== INPUTS =====================
 ph = "เช่น\n774\t81\n227\t06\n403\t94\n938\t98\n446\t77"
 raw = st.text_area("ผลย้อนหลัง", height=220, placeholder=ph)
 
-c1,c2,c3,c4 = st.columns([1,1,1,1])
-with c1:
-    mode = st.selectbox("โหมด", ["ครบตามเป้า", "คัดเลข"], index=(["ครบตามเป้า","คัดเลข"].index(st.session_state.get("mode","ครบตามเป้า"))))
-with c2:
-    k = st.number_input("ใช้ย้อนหลัง (งวด)", min_value=6, max_value=50, value=st.session_state.get("k",12), step=1)
-with c3:
-    seed = st.number_input("Seed สุ่ม (คัดเลข)", min_value=0, max_value=999999, value=st.session_state.get("seed",0), step=1)
-with c4:
-    if st.button("สุ่ม Seed ใหม่"):
-        seed = random.randint(0, 999999)
-        st.session_state["seed"] = seed
-        st.experimental_set_query_params(mode=mode, k=k, seed=seed)
-        st.experimental_rerun()
-
-# พรีเซ็ตแบบง่าย (เก็บใน session)
-st.markdown('<div class="small">บันทึกพรีเซ็ตโหมด/ค่า k/seed</div>', unsafe_allow_html=True)
-pcol1,pcol2,pcol3 = st.columns([2,1,1])
-with pcol1:
-    preset_name = st.text_input("ชื่อพรีเซ็ต", value="", placeholder="เช่น ค่าโปรด")
-with pcol2:
-    if st.button("บันทึกพรีเซ็ต"):
-        presets = st.session_state.get("presets", {})
-        presets[preset_name or f"preset-{len(presets)+1}"] = {"mode":mode, "k":int(k), "seed":int(seed)}
-        st.session_state["presets"] = presets
-with pcol3:
-    presets = st.session_state.get("presets", {})
-    chosen = st.selectbox("เลือกพรีเซ็ต", ["(ไม่เลือก)"] + list(presets.keys()))
-    if chosen != "(ไม่เลือก)":
-        pv = presets[chosen]
-        mode = pv["mode"]; k = pv["k"]; seed = pv["seed"]
-
-if mode == "คัดเลข":
-    random.seed(seed)
+mode = st.selectbox("โหมด", ["ครบตามเป้า", "คัดเลข"])  # คงไว้ 2 โหมด
+k = st.number_input("ใช้ย้อนหลัง (งวด)", min_value=10, max_value=50, value=12, step=1)
 
 # ===================== PARSE =====================
 def parse_rows(text):
@@ -116,7 +92,6 @@ def parse_rows(text):
 
 draws = parse_rows(raw)
 st.write(f"อ่านได้ **{len(draws)}** งวด")
-
 if len(draws) < k:
     st.stop()
 
@@ -162,7 +137,7 @@ def build_singles(draws, k, need=3, pick=1, filtered=False):
     ranked=[str(k) for k,_ in sorted(scores.items(), key=lambda x:(-x[1], x[0]))]
     if filtered:
         pool = ranked[:max(3, need)]
-        return random.sample(pool, min(pick, len(pool)))
+        return [pool[0]]  # คัด 1 ตัวแบบกำหนดแน่นอน (ไม่สุ่ม)
     return ranked[:need]
 
 def build_pairs(draws, k, need=37, pick=5, filtered=False):
@@ -172,8 +147,7 @@ def build_pairs(draws, k, need=37, pick=5, filtered=False):
     pool=set([A,F2,F3]+neighbors+[int(latest2[0]), int(latest2[1])])
 
     hist2=[d["two"] for d in window]
-    pair_scores=defaultdict(float)
-    cand=set()
+    pair_scores=defaultdict(float); cand=set()
     for d in pool:
         for e in pool:
             cand.add(f"{d}{e}")
@@ -189,8 +163,7 @@ def build_pairs(draws, k, need=37, pick=5, filtered=False):
     ranked=[p for p,_ in sorted(pair_scores.items(), key=lambda x:(-x[1], x[0]))]
     ranked = dedupe_pairs_reversed(ranked)
     if filtered:
-        pool = ranked[:max(10, pick)]
-        return random.sample(pool, min(pick, len(pool)))
+        return ranked[:pick]  # คัด 5 ตัวบนสุด
     return ranked[:need]
 
 def build_triples(draws, k, need=66, pick=5, filtered=False, two_best=None):
@@ -199,7 +172,6 @@ def build_triples(draws, k, need=66, pick=5, filtered=False, two_best=None):
         base = build_pairs(draws, k, need=1)[0]
     else:
         base = two_best
-
     missing=[str(d) for d in range(10) if str(d) not in cnt3]
     rare = missing[0] if missing else min([str(d) for d in range(10)], key=lambda d: (cnt3.get(d,0), int(d)))
     specials=['3','4','6','7','8']
@@ -215,22 +187,21 @@ def build_triples(draws, k, need=66, pick=5, filtered=False, two_best=None):
     cand=[f"{p}{base}" for p in prefix_pool]
     ranked = sorted(dedupe_triple_permutation(cand), key=lambda x:(-score(x), x))
     if filtered:
-        pool = ranked[:max(12, pick)]
-        return random.sample(pool, min(pick, len(pool)))
+        return ranked[:pick]  # คัด 5 ชุดบนสุด
     return ranked[:need]
 
 # ===================== BUILD (ตามโหมด) =====================
 if mode == "ครบตามเป้า":
-    singles = build_singles(draws, k, need=3, filtered=False)                   # 3 บน + 2 ล่าง → 3 ตัว
-    pairs   = build_pairs(draws, k, need=37, filtered=False)                    # 37 คู่ (ตัดกลับซ้ำ)
-    triples = build_triples(draws, k, need=66, filtered=False)                  # 66 ชุด (ตัดสลับซ้ำ)
+    singles = build_singles(draws, k, need=3, filtered=False)
+    pairs   = build_pairs(draws, k, need=37, filtered=False)
+    triples = build_triples(draws, k, need=66, filtered=False)
 else:
-    singles = build_singles(draws, k, need=3, pick=1, filtered=True)            # คัด 1 ตัว
-    pairs   = build_pairs(draws, k, need=37, pick=5, filtered=True)             # คัด 5 คู่
+    singles = build_singles(draws, k, need=3, pick=1, filtered=True)
+    pairs   = build_pairs(draws, k, need=37, pick=5, filtered=True)
     base2 = pairs[0] if pairs else None
     triples = build_triples(draws, k, need=66, pick=5, filtered=True, two_best=base2)
 
-# ===================== OUTPUT (ผลทำนาย) =====================
+# ===================== OUTPUT =====================
 st.markdown(f'''
 <div class="card">
   <div class="heading">เด่น — 3 บน + 2 ล่าง {("(คัด 1 ตัว)" if mode=="คัดเลข" else "(3 ตัว)")}</div>
@@ -278,71 +249,33 @@ with dcol2:
                        file_name="ThaiLotto.csv", mime="text/csv")
 with dcol3:
     clip_payload = export_text().replace('"','\\"').replace("\n","\\n")
-    st.markdown(f"""
-    <button onclick="navigator.clipboard.writeText(`{clip_payload}`)" style="
-      background:#fff;border:2px solid var(--thai-blue);color:var(--thai-blue);
-      padding:6px 10px;border-radius:10px;font-weight:800;cursor:pointer;">
-      คัดลอกคลิปบอร์ด
-    </button>
-    """, unsafe_allow_html=True)
+    st.markdown(f'<button class="copybtn" onclick="navigator.clipboard.writeText(`{clip_payload}`)">คัดลอกคลิปบอร์ด</button>',
+                unsafe_allow_html=True)
 st.markdown('</div>', unsafe_allow_html=True)
 
-# ===================== SHARE / PRINT =====================
-share_params = {"mode": mode, "k": int(k), "seed": int(seed)}
-st.markdown('<div class="card"><div class="heading">แชร์ลิงก์ / พิมพ์หน้า</div>', unsafe_allow_html=True)
-s1, s2 = st.columns([1,1])
-with s1:
-    st.write("ลิงก์แชร์พรีเซ็ต:")
-    try:
-        st.code(f"?{urlencode(share_params)}", language="text")
-    except:
-        st.code(f"{share_params}", language="json")
-with s2:
-    st.markdown("""
-    <button onclick="window.print()" style="
-      background:#fff;border:2px solid var(--thai-blue);color:var(--thai-blue);
-      padding:6px 10px;border-radius:10px;font-weight:800;cursor:pointer;">
-      พิมพ์หน้า
-    </button>
-    """, unsafe_allow_html=True)
-st.markdown('</div>', unsafe_allow_html=True)
-
-# ===================== BACKTEST =====================
+# ===================== BACKTEST (คงไว้ตามที่ขอ) =====================
 def eval_single_ok(pred_singles, top3, two2):
-    # เด่น: 3 บน + 2 ล่าง (รวม 5 ตำแหน่ง)
     digits = list(top3) + list(two2)
     return any(d in digits for d in pred_singles)
-
 def eval_pair_ok(pred_pairs, top3, two2):
-    f2 = top3[-2:]   # สองตัวบน (หลักสิบ-หน่วยของสามตัวบน)
-    b2 = two2        # สองตัวล่าง
-    def ok(p, target):
-        return p==target or p[::-1]==target
+    f2 = top3[-2:]; b2 = two2
+    ok=lambda p,t: (p==t or p[::-1]==t)
     return any(ok(p,f2) or ok(p,b2) for p in pred_pairs)
-
 def eval_triple_ok(pred_tris, top3):
     s = "".join(sorted(top3))
     return any("".join(sorted(t))==s for t in pred_tris)
 
-def build_sets_for_window(seq, end_idx):
-    # ใช้ข้อมูล seq[:end_idx] แล้วทำนายงวด seq[end_idx]
-    hist = seq[:end_idx]
-    singles_bt = build_singles(hist, k=int(min(k, len(hist))), need=3, filtered=False)
-    pairs_bt   = build_pairs(hist,   k=int(min(k, len(hist))), need=37, filtered=False)
-    triples_bt = build_triples(hist, k=int(min(k, len(hist))), need=66, filtered=False)
-    return singles_bt, pairs_bt, triples_bt
-
 if st.toggle("แสดงแบ็กเทสต์กับประวัติย้อนหลัง", value=False):
-    hits_s=hits_p=hits_t=0
-    total=0
-    # สไลด์หน้าต่างตั้งแต่ตำแหน่ง k -> นับไปจนก่อนตัวสุดท้าย
+    hits_s=hits_p=hits_t=0; total=0
     for idx in range(int(k), len(draws)):
-        singles_bt, pairs_bt, triples_bt = build_sets_for_window(draws, idx)
+        hist = draws[:idx]
+        singles_bt = build_singles(hist, k=int(min(k, len(hist))), need=3, filtered=False)
+        pairs_bt   = build_pairs(hist,   k=int(min(k, len(hist))), need=37, filtered=False)
+        triples_bt = build_triples(hist, k=int(min(k, len(hist))), need=66, filtered=False)
         nxt = draws[idx]
-        h1 = eval_single_ok(singles_bt, nxt["top3"], nxt["two"])
-        h2 = eval_pair_ok(pairs_bt, nxt["top3"], nxt["two"])
-        h3 = eval_triple_ok(triples_bt, nxt["top3"])
-        hits_s += int(h1); hits_p += int(h2); hits_t += int(h3)
+        hits_s += int(eval_single_ok(singles_bt, nxt["top3"], nxt["two"]))
+        hits_p += int(eval_pair_ok(pairs_bt, nxt["top3"], nxt["two"]))
+        hits_t += int(eval_triple_ok(triples_bt, nxt["top3"]))
         total += 1
     res = pd.DataFrame({
         "หมวด":["เด่น (3 บน + 2 ล่าง | 3 ตัว)", "สองตัว (บน–ล่าง | 37 คู่)", "เจาะลาก (3 ตัวบน | 66 ชุด)"],
@@ -354,11 +287,5 @@ if st.toggle("แสดงแบ็กเทสต์กับประวัต
     st.dataframe(res, hide_index=True, use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-# ===================== FOOTER =====================
+# ===================== FOOTER (ตามคำสั่ง) =====================
 st.markdown('<div class="footer">ลิขสิทธิ์@Phatarit#2025</div>', unsafe_allow_html=True)
-
-# ========= Notes =========
-# - สร้างลิงก์แชร์พรีเซ็ตด้วย query params (?mode=...&k=...&seed=...)
-# - แพ็กเป็น .exe: ใช้ PyInstaller เช่น
-#   pyinstaller --onefile --add-data "app_thailotto_plus.py;." --name "ThaiLotto" run.py
-#   (หรือใช้ streamlit as CLI สร้าง bundle/shortcut ตามสภาพแวดล้อม)
