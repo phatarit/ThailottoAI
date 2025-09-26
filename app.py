@@ -1,113 +1,364 @@
+# app_thailotto_plus.py
+# -*- coding: utf-8 -*-
 import streamlit as st
-import pandas as pd
-import numpy as np
 from collections import Counter, defaultdict
-from itertools import combinations
+import re, random, json, io
+import pandas as pd
+from urllib.parse import urlencode
 
-# ─────────────────── ATTEMPT IMPORT ML DEPENDENCY ───────────────────
-try:
-    from sklearn.neural_network import MLPClassifier
-except ModuleNotFoundError:
-    st.error(
-        "**Error:** Library `scikit-learn` ยังไม่ถูกติดตั้งใน environment นี้\n"
-        "กรุณาเพิ่ม `scikit-learn` ในไฟล์ requirements.txt ของคุณ แล้ว redeploy ใหม่"
-    )
+# ===================== PAGE =====================
+st.set_page_config(
+    page_title="ThaiLotto",
+    page_icon="icon.png",
+    layout="centered"
+)
+
+# ===================== STYLE (ธงชาติไทย) =====================
+st.markdown("""
+<style>
+:root{
+  --thai-blue:#00247D;
+  --thai-red:#CE1126;
+  --thai-white:#FFFFFF;
+}
+.stApp { background: var(--thai-white); }
+.block-container{ max-width: 980px; }
+.title { color: var(--thai-blue); font-weight: 900; font-size: 2.0rem; }
+.subtitle { color: var(--thai-blue); opacity:.85; margin-top:2px; }
+.card{
+  background:#fff; border:4px solid var(--thai-blue); border-radius:16px;
+  padding:14px 16px; margin:12px 0 16px 0; box-shadow:0 8px 20px rgba(0,0,0,.06);
+}
+.heading{ color: var(--thai-blue); font-weight:900; font-size:1.12rem; margin-bottom:6px; }
+.num-xl,.num-lg,.num-md{ color: var(--thai-red); font-weight:900; line-height:1.25; word-break: break-word; }
+.num-xl{ font-size:2.6rem; }
+.num-lg{ font-size:2.2rem; }
+.num-md{ font-size:2.0rem; }
+.badge{
+  display:inline-block; color:var(--thai-red); border:2px solid var(--thai-red);
+  border-radius:12px; padding:4px 12px; margin:4px 8px 0 0; font-weight:900; font-size:1.3rem;
+}
+.kbd{
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New",monospace;
+  background:#eef2ff; border:1px solid #c7d2fe; border-radius:8px; padding:2px 8px;
+}
+.row{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+.small{ font-size:.92rem; color:#1f2937; }
+.footer { text-align:center; margin: 18px 0 8px 0; color:#1f2937; font-weight:700; }
+.btnrow { display:flex; gap:8px; flex-wrap:wrap; }
+</style>
+""", unsafe_allow_html=True)
+
+# ===================== HEADER =====================
+st.markdown('<div class="title">ThaiLotto</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">วางผลย้อนหลังรูปแบบ: <span class="kbd">สามตัวบน  สองตัวล่าง</span> (คั่นด้วยช่องว่างหรือแท็บ) ต่อบรรทัด</div>', unsafe_allow_html=True)
+
+# ===================== QUERY PARAM PRESETS =====================
+q = st.experimental_get_query_params()
+if "seed" in q:
+    try: st.session_state["seed"] = int(q["seed"][0])
+    except: pass
+if "mode" in q:
+    st.session_state["mode"] = q["mode"][0]
+if "k" in q:
+    try: st.session_state["k"] = int(q["k"][0])
+    except: pass
+
+# ===================== INPUTS =====================
+ph = "เช่น\n774\t81\n227\t06\n403\t94\n938\t98\n446\t77"
+raw = st.text_area("ผลย้อนหลัง", height=220, placeholder=ph)
+
+c1,c2,c3,c4 = st.columns([1,1,1,1])
+with c1:
+    mode = st.selectbox("โหมด", ["ครบตามเป้า", "คัดเลข"], index=(["ครบตามเป้า","คัดเลข"].index(st.session_state.get("mode","ครบตามเป้า"))))
+with c2:
+    k = st.number_input("ใช้ย้อนหลัง (งวด)", min_value=6, max_value=50, value=st.session_state.get("k",12), step=1)
+with c3:
+    seed = st.number_input("Seed สุ่ม (คัดเลข)", min_value=0, max_value=999999, value=st.session_state.get("seed",0), step=1)
+with c4:
+    if st.button("สุ่ม Seed ใหม่"):
+        seed = random.randint(0, 999999)
+        st.session_state["seed"] = seed
+        st.experimental_set_query_params(mode=mode, k=k, seed=seed)
+        st.experimental_rerun()
+
+# พรีเซ็ตแบบง่าย (เก็บใน session)
+st.markdown('<div class="small">บันทึกพรีเซ็ตโหมด/ค่า k/seed</div>', unsafe_allow_html=True)
+pcol1,pcol2,pcol3 = st.columns([2,1,1])
+with pcol1:
+    preset_name = st.text_input("ชื่อพรีเซ็ต", value="", placeholder="เช่น ค่าโปรด")
+with pcol2:
+    if st.button("บันทึกพรีเซ็ต"):
+        presets = st.session_state.get("presets", {})
+        presets[preset_name or f"preset-{len(presets)+1}"] = {"mode":mode, "k":int(k), "seed":int(seed)}
+        st.session_state["presets"] = presets
+with pcol3:
+    presets = st.session_state.get("presets", {})
+    chosen = st.selectbox("เลือกพรีเซ็ต", ["(ไม่เลือก)"] + list(presets.keys()))
+    if chosen != "(ไม่เลือก)":
+        pv = presets[chosen]
+        mode = pv["mode"]; k = pv["k"]; seed = pv["seed"]
+
+if mode == "คัดเลข":
+    random.seed(seed)
+
+# ===================== PARSE =====================
+def parse_rows(text):
+    rows=[]
+    for line in text.strip().splitlines():
+        if not line.strip(): continue
+        parts=re.split(r"\s+", line.strip())
+        if len(parts)>=2 and parts[0].isdigit() and parts[1].isdigit():
+            top3=parts[0].zfill(3); two=parts[1].zfill(2)
+            if len(top3)==3 and len(two)==2:
+                rows.append({"top3":top3,"two":two})
+    return rows
+
+draws = parse_rows(raw)
+st.write(f"อ่านได้ **{len(draws)}** งวด")
+
+if len(draws) < k:
     st.stop()
 
-# ─────────────────── CONFIG ───────────────────
-st.set_page_config(page_title="ThaiLottoAI", page_icon="🎯", layout="centered")
-st.title("🎯 ThaiLottoAI - Enhanced Next-Draw Predictor")
+# ===================== UTIL =====================
+def mod10_digits(s): return sum(int(c) for c in s) % 10
+def freq_digits_in(seq): return Counter("".join(seq))
+def dedupe_pairs_reversed(pairs):
+    seen=set(); out=[]
+    for p in pairs:
+        key=tuple(sorted(p))
+        if key not in seen:
+            seen.add(key); out.append(p)
+    return out
+def dedupe_triple_permutation(tris):
+    seen=set(); out=[]
+    for t in tris:
+        key="".join(sorted(t))
+        if key not in seen:
+            seen.add(key); out.append(t)
+    return out
 
-# ────────────────── SESSION STATE ──────────────────
-if "history" not in st.session_state:
-    st.session_state.history = []  # store tuples of (triple, pair)
+def compute_features(draws, k):
+    window=draws[-k:]
+    latest3 = window[-1]["top3"]
+    latest2 = window[-1]["two"]
+    A = mod10_digits(latest3)
+    B = int(latest2[-1])
+    cnt2 = freq_digits_in([d["two"] for d in window])
+    cnt3 = freq_digits_in([d["top3"] for d in window])
+    F2 = int(max(cnt2.items(), key=lambda x:x[1])[0])
+    F3 = int(max(cnt3.items(), key=lambda x:x[1])[0])
+    return window, latest3, latest2, A, B, cnt2, cnt3, F2, F3
 
-# ────────────────── INPUT ──────────────────
-st.markdown("วางผลย้อนหลัง **สามตัวบน เว้นวรรค สองตัวล่าง** ต่อเนื่องกันคนละบรรทัด เช่น `774 81`")
-raw = st.text_area("📋 ข้อมูลย้อนหลัง", height=300,
-                   placeholder="774 81\n227 06\n403 94\n...\n")
+# ===================== BUILDERS =====================
+def build_singles(draws, k, need=3, pick=1, filtered=False):
+    window, latest3, latest2, A, B, cnt2, cnt3, F2, F3 = compute_features(draws, k)
+    T5 = (sum(int(x[-1]) for x in [d["two"] for d in window]) + sum(int(c) for c in latest3)) % 10
+    scores=defaultdict(float)
+    for d in [A, B, F2, F3, T5]: scores[d]+=1.0
+    scores[A]+=0.5; scores[B]+=0.3; scores[F2]+=0.4; scores[F3]+=0.4; scores[T5]+=0.2
+    for dstr,c in cnt2.items(): scores[int(dstr)] += 0.04*c
+    for dstr,c in cnt3.items(): scores[int(dstr)] += 0.03*c
+    ranked=[str(k) for k,_ in sorted(scores.items(), key=lambda x:(-x[1], x[0]))]
+    if filtered:
+        pool = ranked[:max(3, need)]
+        return random.sample(pool, min(pick, len(pool)))
+    return ranked[:need]
 
-# ────────────────── PARSE & VALIDATE ──────────────────
-draws = []
-for idx, line in enumerate(raw.splitlines(), 1):
-    parts = line.strip().split()
-    if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-        t, b = parts
-        if len(t)==3 and len(b)==2:
-            draws.append((t, b))
-        else:
-            st.warning(f"ข้ามบรรทัด {idx}: รูปแบบไม่ถูกต้อง → {line}")
-    elif line.strip():
-        st.warning(f"ข้ามบรรทัด {idx}: ไม่พบข้อมูลที่ใช้ได้ → {line}")
+def build_pairs(draws, k, need=37, pick=5, filtered=False):
+    window, latest3, latest2, A, B, cnt2, cnt3, F2, F3 = compute_features(draws, k)
+    w10=lambda x:(x+10)%10
+    neighbors=[w10(B+i) for i in [-2,-1,0,1,2]]
+    pool=set([A,F2,F3]+neighbors+[int(latest2[0]), int(latest2[1])])
 
-if len(draws) < 60:
-    st.info("กรุณาป้อนข้อมูลย้อนหลังอย่างน้อย 60 งวด เพื่อความแม่นยำสูงสุด")
-    st.stop()
+    hist2=[d["two"] for d in window]
+    pair_scores=defaultdict(float)
+    cand=set()
+    for d in pool:
+        for e in pool:
+            cand.add(f"{d}{e}")
 
-# update session history
-st.session_state.history = draws
+    last2 = latest2
+    for p in cand:
+        a,b=int(p[0]),int(p[1])
+        pair_scores[p]+= 0.9*hist2.count(p)
+        pair_scores[p]+= 0.06*cnt2.get(str(a),0) + 0.06*cnt2.get(str(b),0)
+        h=(p[0]!=last2[0])+(p[1]!=last2[1])
+        pair_scores[p]+= {0:0.35, 1:0.2, 2:0.0}[h]
 
-# ────────────────── PREPROCESS ──────────────────
-triples = [int(t) for t, _ in draws]
-pairs = [int(b) for _, b in draws]
+    ranked=[p for p,_ in sorted(pair_scores.items(), key=lambda x:(-x[1], x[0]))]
+    ranked = dedupe_pairs_reversed(ranked)
+    if filtered:
+        pool = ranked[:max(10, pick)]
+        return random.sample(pool, min(pick, len(pool)))
+    return ranked[:need]
 
-# ────────────────── WEIGHTED FREQUENCY PREDICTION ───────────────────
-def weighted_freq(sequence, window, decay=0.85):
-    seq = sequence[-window:]
-    weights = [decay**i for i in range(len(seq)-1, -1, -1)]
-    cnt = defaultdict(float)
-    for val, w in zip(seq, weights):
-        cnt[val] += w
-    return sorted(cnt.items(), key=lambda x: -x[1])
+def build_triples(draws, k, need=66, pick=5, filtered=False, two_best=None):
+    window, latest3, latest2, A, B, cnt2, cnt3, F2, F3 = compute_features(draws, k)
+    if two_best is None:
+        base = build_pairs(draws, k, need=1)[0]
+    else:
+        base = two_best
 
-def predict_weighted_next(seq, window, topk, exclude_count=2):
-    freq = weighted_freq(seq, window)
-    hist_count = Counter(seq)
-    preds = []
-    for val, _ in freq:
-        if hist_count[val] < exclude_count:
-            preds.append(val)
-        if len(preds) == topk:
-            break
-    return preds
+    missing=[str(d) for d in range(10) if str(d) not in cnt3]
+    rare = missing[0] if missing else min([str(d) for d in range(10)], key=lambda d: (cnt3.get(d,0), int(d)))
+    specials=['3','4','6','7','8']
+    prefix_pool = [rare] + [x for x in specials if x!=rare] + [str(A), str(F3)] + list(set(latest3))
 
-# ────────────────── ML-BASED PREDICTION ───────────────────
-def ml_predict_seq(sequence, window, topk):
-    X, y = [], []
-    for i in range(len(sequence)-window):
-        X.append(sequence[i:i+window])
-        y.append(sequence[i+window])
-    X, y = np.array(X), np.array(y)
-    if len(X) < window*2:
-        return []
-    model = MLPClassifier(hidden_layer_sizes=(64,32), max_iter=2000, random_state=42)
-    model.fit(X, y)
-    probs = model.predict_proba([sequence[-window:]])[0]
-    classes = model.classes_
-    top_idx = np.argsort(probs)[-topk:][::-1]
-    return [classes[i] for i in top_idx]
+    def score(t):
+        freq = sum(cnt3.get(ch,0) for ch in t)
+        ca, cb = Counter(t), Counter(latest3)
+        sim = sum(min(ca[d], cb[d]) for d in set(ca)|set(cb))
+        bonus = 0.3 if t[0] in [str(A), str(F3), rare] else 0.0
+        return 0.55*freq + 0.35*sim + bonus
 
-# ────────────────── ENSEMBLE METHODS ───────────────────
-win_w, win_ml = 100, 60
-k_pairs, k_triples = 4, 2
-w_triples = predict_weighted_next(triples, win_w, k_triples)
-w_pairs = predict_weighted_next(pairs, win_w, k_pairs)
-ml_triples = ml_predict_seq(triples, win_ml, k_triples)
-ml_pairs = ml_predict_seq(pairs, win_ml, k_pairs)
+    cand=[f"{p}{base}" for p in prefix_pool]
+    ranked = sorted(dedupe_triple_permutation(cand), key=lambda x:(-score(x), x))
+    if filtered:
+        pool = ranked[:max(12, pick)]
+        return random.sample(pool, min(pick, len(pool)))
+    return ranked[:need]
 
-def merge_preds(w, m, k):
-    inter = [v for v in w if v in m]
-    merged = inter + [v for v in w if v not in inter] + [v for v in m if v not in inter]
-    return merged[:k]
+# ===================== BUILD (ตามโหมด) =====================
+if mode == "ครบตามเป้า":
+    singles = build_singles(draws, k, need=3, filtered=False)                   # 3 บน + 2 ล่าง → 3 ตัว
+    pairs   = build_pairs(draws, k, need=37, filtered=False)                    # 37 คู่ (ตัดกลับซ้ำ)
+    triples = build_triples(draws, k, need=66, filtered=False)                  # 66 ชุด (ตัดสลับซ้ำ)
+else:
+    singles = build_singles(draws, k, need=3, pick=1, filtered=True)            # คัด 1 ตัว
+    pairs   = build_pairs(draws, k, need=37, pick=5, filtered=True)             # คัด 5 คู่
+    base2 = pairs[0] if pairs else None
+    triples = build_triples(draws, k, need=66, pick=5, filtered=True, two_best=base2)
 
-next_triples = merge_preds(w_triples, ml_triples, k_triples)
-next_pairs = merge_preds(w_pairs, ml_pairs, k_pairs)
+# ===================== OUTPUT (ผลทำนาย) =====================
+st.markdown(f'''
+<div class="card">
+  <div class="heading">เด่น — 3 บน + 2 ล่าง {("(คัด 1 ตัว)" if mode=="คัดเลข" else "(3 ตัว)")}</div>
+  <div class="num-xl">{"  ".join(singles)}</div>
+</div>
+''', unsafe_allow_html=True)
 
-# ────────────────── DISPLAY RESULTS ───────────────────
-st.header("📊 ผลทำนายงวดถัดไป 📊")
-st.subheader("🔴 สามตัวบน (2 ชุด)")
-st.write([f"{v:03d}" for v in next_triples])
-st.subheader("🟢 สองตัวล่าง (4 ชุด)")
-st.write([f"{v:02d}" for v in next_pairs])
+st.markdown(f'''
+<div class="card">
+  <div class="heading">สองตัว (บน–ล่าง) {("(คัด 5 คู่ | ตัดสลับซ้ำ)" if mode=="คัดเลข" else "(37 คู่ | ตัดสลับซ้ำ)")}</div>
+  <div class="num-lg">{"  ".join(pairs)}</div>
+</div>
+''', unsafe_allow_html=True)
 
-st.caption("สูตร: Weighted Frequency + ML Ensemble | พัฒนาโดย ThaiLottoAI")
+st.markdown(f'''
+<div class="card">
+  <div class="heading">เจาะลาก — 3 ตัวบน {("(คัด 5 ชุด | ตัดสลับซ้ำ)" if mode=="คัดเลข" else "(66 ชุด | ตัดสลับซ้ำ)")}</div>
+  <div class="num-md">{"  ".join(triples)}</div>
+</div>
+''', unsafe_allow_html=True)
+
+# ===================== DOWNLOAD & CLIPBOARD =====================
+def export_text():
+    lines = []
+    lines.append(f"เด่น: {' '.join(singles)}")
+    lines.append(f"สองตัว: {' '.join(pairs)}")
+    lines.append(f"เจาะลาก: {' '.join(triples)}")
+    return "\n".join(lines)
+
+def export_csv_df():
+    rows=[]
+    for d in singles: rows.append({"type":"single","value":d})
+    for p in pairs:   rows.append({"type":"pair","value":p})
+    for t in triples: rows.append({"type":"triple","value":t})
+    return pd.DataFrame(rows)
+
+st.markdown('<div class="card"><div class="heading">ดาวน์โหลด / คัดลอก</div>', unsafe_allow_html=True)
+dcol1, dcol2, dcol3 = st.columns([1,1,2])
+with dcol1:
+    st.download_button("ดาวน์โหลด TXT", data=export_text().encode("utf-8"),
+                       file_name="ThaiLotto.txt", mime="text/plain")
+with dcol2:
+    csv_df = export_csv_df()
+    st.download_button("ดาวน์โหลด CSV", data=csv_df.to_csv(index=False).encode("utf-8"),
+                       file_name="ThaiLotto.csv", mime="text/csv")
+with dcol3:
+    clip_payload = export_text().replace('"','\\"').replace("\n","\\n")
+    st.markdown(f"""
+    <button onclick="navigator.clipboard.writeText(`{clip_payload}`)" style="
+      background:#fff;border:2px solid var(--thai-blue);color:var(--thai-blue);
+      padding:6px 10px;border-radius:10px;font-weight:800;cursor:pointer;">
+      คัดลอกคลิปบอร์ด
+    </button>
+    """, unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
+
+# ===================== SHARE / PRINT =====================
+share_params = {"mode": mode, "k": int(k), "seed": int(seed)}
+st.markdown('<div class="card"><div class="heading">แชร์ลิงก์ / พิมพ์หน้า</div>', unsafe_allow_html=True)
+s1, s2 = st.columns([1,1])
+with s1:
+    st.write("ลิงก์แชร์พรีเซ็ต:")
+    try:
+        st.code(f"?{urlencode(share_params)}", language="text")
+    except:
+        st.code(f"{share_params}", language="json")
+with s2:
+    st.markdown("""
+    <button onclick="window.print()" style="
+      background:#fff;border:2px solid var(--thai-blue);color:var(--thai-blue);
+      padding:6px 10px;border-radius:10px;font-weight:800;cursor:pointer;">
+      พิมพ์หน้า
+    </button>
+    """, unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
+
+# ===================== BACKTEST =====================
+def eval_single_ok(pred_singles, top3, two2):
+    # เด่น: 3 บน + 2 ล่าง (รวม 5 ตำแหน่ง)
+    digits = list(top3) + list(two2)
+    return any(d in digits for d in pred_singles)
+
+def eval_pair_ok(pred_pairs, top3, two2):
+    f2 = top3[-2:]   # สองตัวบน (หลักสิบ-หน่วยของสามตัวบน)
+    b2 = two2        # สองตัวล่าง
+    def ok(p, target):
+        return p==target or p[::-1]==target
+    return any(ok(p,f2) or ok(p,b2) for p in pred_pairs)
+
+def eval_triple_ok(pred_tris, top3):
+    s = "".join(sorted(top3))
+    return any("".join(sorted(t))==s for t in pred_tris)
+
+def build_sets_for_window(seq, end_idx):
+    # ใช้ข้อมูล seq[:end_idx] แล้วทำนายงวด seq[end_idx]
+    hist = seq[:end_idx]
+    singles_bt = build_singles(hist, k=int(min(k, len(hist))), need=3, filtered=False)
+    pairs_bt   = build_pairs(hist,   k=int(min(k, len(hist))), need=37, filtered=False)
+    triples_bt = build_triples(hist, k=int(min(k, len(hist))), need=66, filtered=False)
+    return singles_bt, pairs_bt, triples_bt
+
+if st.toggle("แสดงแบ็กเทสต์กับประวัติย้อนหลัง", value=False):
+    hits_s=hits_p=hits_t=0
+    total=0
+    # สไลด์หน้าต่างตั้งแต่ตำแหน่ง k -> นับไปจนก่อนตัวสุดท้าย
+    for idx in range(int(k), len(draws)):
+        singles_bt, pairs_bt, triples_bt = build_sets_for_window(draws, idx)
+        nxt = draws[idx]
+        h1 = eval_single_ok(singles_bt, nxt["top3"], nxt["two"])
+        h2 = eval_pair_ok(pairs_bt, nxt["top3"], nxt["two"])
+        h3 = eval_triple_ok(triples_bt, nxt["top3"])
+        hits_s += int(h1); hits_p += int(h2); hits_t += int(h3)
+        total += 1
+    res = pd.DataFrame({
+        "หมวด":["เด่น (3 บน + 2 ล่าง | 3 ตัว)", "สองตัว (บน–ล่าง | 37 คู่)", "เจาะลาก (3 ตัวบน | 66 ชุด)"],
+        "ถูก(ครั้ง)":[hits_s, hits_p, hits_t],
+        "ทั้งหมด":[total,total,total],
+    })
+    res["เปอร์เซ็นต์(%)"] = (res["ถูก(ครั้ง)"]/res["ทั้งหมด"]*100).round(2)
+    st.markdown('<div class="card"><div class="heading">ผลแบ็กเทสต์</div>', unsafe_allow_html=True)
+    st.dataframe(res, hide_index=True, use_container_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# ===================== FOOTER =====================
+st.markdown('<div class="footer">ลิขสิทธิ์@Phatarit#2025</div>', unsafe_allow_html=True)
+
+# ========= Notes =========
+# - สร้างลิงก์แชร์พรีเซ็ตด้วย query params (?mode=...&k=...&seed=...)
+# - แพ็กเป็น .exe: ใช้ PyInstaller เช่น
+#   pyinstaller --onefile --add-data "app_thailotto_plus.py;." --name "ThaiLotto" run.py
+#   (หรือใช้ streamlit as CLI สร้าง bundle/shortcut ตามสภาพแวดล้อม)
